@@ -2,6 +2,7 @@ import argparse
 import time
 import sys
 import hashlib
+import os
 
 # 파일 시그니처 정의
 FILE_SIGNATURES = {
@@ -12,6 +13,7 @@ FILE_SIGNATURES = {
     'jpg': [b'\xff\xd8\xff\xe0', b'\xff\xd8\xff\xe1', b'\xff\xd8\xff\xe8', b'\xff\xd8\xff\xdb', b'\xff\xd8\xff\xee'],
     'zip': b'PK\x03\x04',
     'exe': b'MZ',
+    'msi': b'MZ',  
     'ico': b'\x00\x00\x01\x00',
     'cur': b'\x00\x00\x02\x00',
     'mpg': b'\x00\x00\x01\xb3',
@@ -233,54 +235,75 @@ def check_for_ransomware(file_path):    # 파일 이름 패턴 분석
         
         print(f"{file_path}는 랜섬웨어에 감염되지 않은 정상 파일입니다.")
         
-def apply_anti_debugging_and_obfuscation(file_path):    # PE 또는 ELF 파일에 안티디버깅 기법과 난독화 기법을 적용하는 함수
+def apply_anti_debugging_and_obfuscation(file_path):
     
     if not os.path.exists(file_path):
     
         print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
     
         return
-
     print(f"{file_path}에 안티디버깅 및 난독화 기법을 적용 중입니다...")
     
-    # 안티디버깅 기법 적용 예시: 프로세스 이름 검사
     anti_debugging_code = b"\xEB\xFE"  # 무한 루프 삽입
     
     with open(file_path, 'ab') as f:
     
         f.write(anti_debugging_code)
     
-    # 예시: 무작위 바이트 코드 삽입
     with open(file_path, 'ab') as f:
     
-        random_bytes = os.urandom(10)  # 무작위 바이트 생성
+        random_bytes = os.urandom(10)
     
         f.write(random_bytes)
-
+    
     print("안티디버깅 및 난독화 기법이 성공적으로 적용되었습니다.")
 
-def detect_anti_debugging_and_obfuscation(file_path):   #파일에 안티디버깅 및 난독화가 적용되었는지 확인하는 함수
-
+def detect_anti_debugging_and_obfuscation(file_path):
+    
     if not os.path.exists(file_path):
-
+    
         print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
-
+    
         return
-
+    
     print(f"{file_path}에 안티디버깅 및 난독화가 적용되었는지 확인 중입니다...")
     
-    # 예시: 파일 내 특정 바이트 패턴 검사
     with open(file_path, 'rb') as f:
+    
+        content = f.read()
+    
+        if b"\xEB\xFE" in content:
+    
+            print(f"{file_path}에 안티디버깅 기법이 적용되었습니다.")
+    
+        else:
+    
+            print(f"{file_path}에 안티디버깅 기법이 적용되지 않았습니다.")
+            
+def remove_anti_debugging_and_obfuscation(file_path):   # 안티디버깅 기법과 난독화 기법을 해제하는 함수
+    
+    if not os.path.exists(file_path):
+    
+        print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
+    
+        return
 
+    print(f"{file_path}에서 안티디버깅 및 난독화 기법을 제거하는 중입니다...")
+
+    # 파일에서 안티디버깅 코드 및 난독화된 바이트 패턴을 찾고 제거
+    with open(file_path, 'rb') as f:
+    
         content = f.read()
 
-        if b"\xEB\xFE" in content:  # 무한 루프 코드 확인
+    # 안티디버깅 코드 제거
+    content = content.replace(b"\xEB\xFE", b"")
 
-            print(f"{file_path}에 안티디버깅 기법이 적용되었습니다.")
+    # 파일을 덮어쓰기 모드로 열고 변경된 내용을 기록
+    with open(file_path, 'wb') as f:
+    
+        f.write(content)
 
-        else:
-
-            print(f"{file_path}에 안티디버깅 기법이 적용되지 않았습니다.")
+    print("안티디버깅 및 난독화 기법이 성공적으로 제거되었습니다.")
 
 def main():
     
@@ -313,12 +336,19 @@ def main():
         help='PE 또는 ELF 파일에 안티디버깅 및 난독화 기법을 적용합니다.'
     
     )
+    
     parser.add_argument(
         
         '-dd', '--detect-debug', 
         action='store_true', 
         help='PE 또는 ELF 파일에 안티디버깅 및 난독화 기법이 적용되었는지 확인합니다.'
     
+    )
+    
+    parser.add_argument(
+        '-dx', '--remove-debug', 
+        action='store_true', 
+        help='PE 또는 ELF 파일에서 안티디버깅 및 난독화 기법을 제거합니다.'
     )
     
     args = parser.parse_args()
@@ -345,6 +375,10 @@ def main():
         if args.detect_debug:
             
             detect_anti_debugging_and_obfuscation(file_path)
+            
+        if args.remove_debug:
+            
+            remove_anti_debugging_and_obfuscation(file_path)
     
     else:
 
