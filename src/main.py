@@ -232,6 +232,55 @@ def check_for_ransomware(file_path):    # 파일 이름 패턴 분석
     if not suspicious:
         
         print(f"{file_path}는 랜섬웨어에 감염되지 않은 정상 파일입니다.")
+        
+def apply_anti_debugging_and_obfuscation(file_path):    # PE 또는 ELF 파일에 안티디버깅 기법과 난독화 기법을 적용하는 함수
+    
+    if not os.path.exists(file_path):
+    
+        print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
+    
+        return
+
+    print(f"{file_path}에 안티디버깅 및 난독화 기법을 적용 중입니다...")
+    
+    # 안티디버깅 기법 적용 예시: 프로세스 이름 검사
+    anti_debugging_code = b"\xEB\xFE"  # 무한 루프 삽입
+    
+    with open(file_path, 'ab') as f:
+    
+        f.write(anti_debugging_code)
+    
+    # 예시: 무작위 바이트 코드 삽입
+    with open(file_path, 'ab') as f:
+    
+        random_bytes = os.urandom(10)  # 무작위 바이트 생성
+    
+        f.write(random_bytes)
+
+    print("안티디버깅 및 난독화 기법이 성공적으로 적용되었습니다.")
+
+def detect_anti_debugging_and_obfuscation(file_path):   #파일에 안티디버깅 및 난독화가 적용되었는지 확인하는 함수
+
+    if not os.path.exists(file_path):
+
+        print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
+
+        return
+
+    print(f"{file_path}에 안티디버깅 및 난독화가 적용되었는지 확인 중입니다...")
+    
+    # 예시: 파일 내 특정 바이트 패턴 검사
+    with open(file_path, 'rb') as f:
+
+        content = f.read()
+
+        if b"\xEB\xFE" in content:  # 무한 루프 코드 확인
+
+            print(f"{file_path}에 안티디버깅 기법이 적용되었습니다.")
+
+        else:
+
+            print(f"{file_path}에 안티디버깅 기법이 적용되지 않았습니다.")
 
 def main():
     
@@ -257,6 +306,21 @@ def main():
     
     )
     
+    parser.add_argument(
+        
+        '-D', '--apply-debug', 
+        action='store_true', 
+        help='PE 또는 ELF 파일에 안티디버깅 및 난독화 기법을 적용합니다.'
+    
+    )
+    parser.add_argument(
+        
+        '-dd', '--detect-debug', 
+        action='store_true', 
+        help='PE 또는 ELF 파일에 안티디버깅 및 난독화 기법이 적용되었는지 확인합니다.'
+    
+    )
+    
     args = parser.parse_args()
 
     # 파일 경로와 해시 분리
@@ -273,6 +337,14 @@ def main():
         if args.ransomware:
         
             check_for_ransomware(file_path)
+            
+        if args.apply_debug:
+            
+            apply_anti_debugging_and_obfuscation(file_path)
+        
+        if args.detect_debug:
+            
+            detect_anti_debugging_and_obfuscation(file_path)
     
     else:
 

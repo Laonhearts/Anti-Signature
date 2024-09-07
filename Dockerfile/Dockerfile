@@ -1,14 +1,15 @@
-# 베이스 이미지로 Python 3.9을 사용합니다.
+# 베이스 이미지를 Python 3.9로 설정
 FROM python:3.9-slim
 
-# 작업 디렉토리를 설정합니다.
-WORKDIR /app
+# 작업 디렉토리 생성
+WORKDIR /usr/src/app
 
-# 필요한 패키지들을 설치합니다. (argparse는 기본적으로 포함됨)
-RUN pip install --no-cache-dir --upgrade pip
+# 의존성 파일을 복사하고 필요 라이브러리 설치
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 현재 디렉토리의 모든 파일을 Docker 컨테이너의 /app 디렉토리로 복사합니다.
+# 소스 파일 복사
 COPY . .
 
-# 컨테이너 실행 시 기본적으로 실행될 명령어를 정의합니다.
-CMD ["python", "main.py"]
+# 스크립트를 실행할 수 있도록 엔트리포인트 설정
+ENTRYPOINT ["python", "main.py"]
