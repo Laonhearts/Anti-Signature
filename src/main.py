@@ -3,6 +3,7 @@ import time
 import sys
 import hashlib
 import os
+import re
 
 # 파일 시그니처 정의
 FILE_SIGNATURES = {
@@ -73,28 +74,32 @@ FILE_SIGNATURES = {
 
 # 랜섬웨어와 관련된 확장자 목록
 RANSOMWARE_EXTENSIONS = [
+    # 랜섬웨어로 의심되는 확장자 목록
 
-    'locky', 'zepto', 'odin', 'cerber', 'crysis', 'wallet', 'zzzzz', 'zepto', 'ccc', 'exx', 'ecc', 'crypt', 'crab', 'cbf',
-    'arena', 'dharma', 'wallet', 'arrow', 'grt', 'ryuk', 'phobos', 'krab', 'fucked', 'crypted', 'crypted', 'satan', 'xrat',
-    'gandcrab', 'cyborg', 'salus', 'ciphered', 'shiva', 'stupid', 'why', 'weapologize', 'grandcrab', 'megacortex', 'revil',
-    'ekvf', 'fairytail', 'exorcist', 'mamba', 'killing_time', 'recovery', 'volcano', 'pscrypt', 'tcps', 'fuxsocy', 'heof',
-    'matrix', 'medusa', 'snake', 'ftcode', 'calipso', 'encrypted', 'vault', 'shariz', 'tor', 'globeimposter', 'kogda',
-    'crypmic', 'bokbot', 'dewar', 'defray', 'greystar', 'pclock', 'moisha', 'zcrypt', 'djvu', 'dotmap', 'sodinokibi',
-    'calipto', 'fun', 'worm', 'inferno', 'medy', 'fudcrypt', 'zohar', 'nig', 'ogre', 'uizsdgpo', 'hermes', 'nellyson',
-    'pay', 'bepow', 'futc', 'suck', 'f**ked', 'foxf***r', 'hotjob', 'gusar', 'jigsaw', 'oklah', 'lockfile', 'aesc', 'wb',
-    'tycoon', 'careto', 'snake', 'azov', 'conti', 'ragnarok', 'shiva', 'crippled', 'trosy', 'johnny', 'regen', 'whatthe',
-    '000', 'hitler', 'somethinghere', 'uw', 'anubi', 'notgotenough', 'justforyou', 'bondy', 'ark', 'kubos', 'police',
-    'aprilfool', 'bitch', 'crisis', 'teerac', 'long', 'infom', 'woswos', 'uw4w', 'ctrb', 'purge', 'fiwlgphz', 'platano',
-    'pro', 'locked', 'eyy', 'whythis', 'k0der', 'joker', 'grt', 'fucku', 'charm', 'conti', 'doubleup', 'payup', 'firecrypt',
-    'miyake', 'senpai', 'onspeed', 'fxckoff', 'stupid', 'zer0', 'p0rn', 'beethoven', 'im sorry', 'kuba', 'hahaha', '555',
-    'sexx', 'fuckyou', 'supercrypt', 'gudrotka', 'catchmeifyoucan', 'bambam', 'lucy', 'sadism', 'fedup', 'makop', 'alpha',
-    'master', 'mcafee', 'bastard', 'locki', 'striker', 'grimly', 'cryptolocker', 'zcrypt', 'kukaracha', 'kraken', 'supersystem',
-    'hot', 'ispy', 'newversion', 'payfast', 'futurat', 'unlock', 'kkk', 'openme', 'blablabla', 'goof', 'psycho', 'trigger',
-    'memeware', 'emotet', 'wannacry', 'notpetya'
+    'locky', 'zepto', 'odin', 'cerber', 'crysis', 'wallet', 'zzzzz', 'ccc', 'exx', 'ecc', 'crypt', 'crab', 'cbf',
+    'arena', 'dharma', 'arrow', 'grt', 'ryuk', 'phobos', 'krab', 'fucked', 'crypted', 'satan', 'xrat', 'gandcrab', 
+    'cyborg', 'salus', 'ciphered', 'shiva', 'stupid', 'why', 'weapologize', 'grandcrab', 'megacortex', 'revil', 
+    'ekvf', 'fairytail', 'exorcist', 'mamba', 'killing_time', 'recovery', 'volcano', 'pscrypt', 'tcps', 'fuxsocy', 
+    'heof', 'matrix', 'medusa', 'snake', 'ftcode', 'calipso', 'encrypted', 'vault', 'shariz', 'tor', 'globeimposter', 
+    'kogda', 'crypmic', 'bokbot', 'dewar', 'defray', 'greystar', 'pclock', 'moisha', 'zcrypt', 'djvu', 'dotmap', 
+    'sodinokibi', 'calipto', 'fun', 'worm', 'inferno', 'medy', 'fudcrypt', 'zohar', 'nig', 'ogre', 'uizsdgpo', 
+    'hermes', 'nellyson', 'pay', 'bepow', 'futc', 'suck', 'f**ked', 'foxf***r', 'hotjob', 'gusar', 'jigsaw', 'oklah', 
+    'lockfile', 'aesc', 'wb', 'tycoon', 'careto', 'azov', 'conti', 'ragnarok', 'crippled', 'trosy', 'johnny', 'regen', 
+    'whatthe', '000', 'hitler', 'somethinghere', 'uw', 'anubi', 'notgotenough', 'justforyou', 'bondy', 'ark', 'kubos', 
+    'police', 'aprilfool', 'bitch', 'crisis', 'teerac', 'long', 'infom', 'woswos', 'uw4w', 'ctrb', 'purge', 'fiwlgphz', 
+    'platano', 'pro', 'locked', 'eyy', 'whythis', 'k0der', 'joker', 'fucku', 'charm', 'doubleup', 'payup', 'firecrypt', 
+    'miyake', 'senpai', 'onspeed', 'fxckoff', 'zer0', 'p0rn', 'beethoven', 'im sorry', 'kuba', 'hahaha', '555', 
+    'sexx', 'fuckyou', 'supercrypt', 'gudrotka', 'catchmeifyoucan', 'bambam', 'lucy', 'sadism', 'fedup', 'makop', 
+    'alpha', 'master', 'mcafee', 'bastard', 'locki', 'striker', 'grimly', 'cryptolocker', 'kukaracha', 'kraken', 
+    'supersystem', 'hot', 'ispy', 'newversion', 'payfast', 'futurat', 'unlock', 'kkk', 'openme', 'blablabla', 
+    'goof', 'psycho', 'trigger', 'memeware', 'emotet', 'wannacry', 'notpetya', 'mazefuck', 'mazelocker', 'pegasus', 
+    'sodinokibi', 'rdp', 'kodg', 'covm', 'cazw', 'egregor', 'revil', 'recovery', 'sodin', 'kodc', 'gdc', 'gdcb', 
+    'grb', 'egregor', 'medusalocker', 'medusa', 'phobos', 'ransom', 'makop', 'mountlocker', 'avoslocker', 'cuba', 
+    'kaseya', 'kaseyacrypt', 'blackcat', 'alphv', 'lorenz', 'lockbit', 'abcd', 'lukitus', 'moqs', 'thunderx'
 
 ]
 
-def print_ascii_art():
+def print_ascii_art():  # 프로그램 시작시 표기될 아스키아트 (ANTI SIGNATURE)
 
     ascii_art = """
 
@@ -140,7 +145,7 @@ def calculate_file_hash(file_path, hash_algorithm='sha256'):    # 파일 해시 
 
     return hash_func.hexdigest()
 
-def check_file_integrity(file_path, expected_hash=None):
+def check_file_integrity(file_path, expected_hash=None):    # 파일 무결성 확인
     
     try:
     
@@ -235,7 +240,7 @@ def check_for_ransomware(file_path):    # 파일 이름 패턴 분석
         
         print(f"{file_path}는 랜섬웨어에 감염되지 않은 정상 파일입니다.")
         
-def apply_anti_debugging_and_obfuscation(file_path):
+def apply_anti_debugging_and_obfuscation(file_path):  # PE 또는 ELF 파일에 안티디버깅 및 난독화 기법을 적용하는 함수
     
     if not os.path.exists(file_path):
     
@@ -258,7 +263,7 @@ def apply_anti_debugging_and_obfuscation(file_path):
     
     print("안티디버깅 및 난독화 기법이 성공적으로 적용되었습니다.")
 
-def detect_anti_debugging_and_obfuscation(file_path):
+def detect_anti_debugging_and_obfuscation(file_path):  # 파일에 안티디버깅 및 난독화 기법이 적용되었는지 확인하는 함수
     
     if not os.path.exists(file_path):
     
