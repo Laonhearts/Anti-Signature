@@ -1,15 +1,17 @@
-# 베이스 이미지를 Python 3.9로 설정
+# 베이스 이미지 선택 (Python 최신 버전 사용)
 FROM python:3.9-slim
 
-# 작업 디렉토리 생성
-WORKDIR /usr/src/app
+# 작업 디렉토리 설정
+WORKDIR /app
 
-# 의존성 파일을 복사하고 필요 라이브러리 설치
-COPY requirements.txt ./
+# 요구 사항 파일을 이미지에 복사
+COPY requirements.txt .
+
+# 패키지 설치
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 소스 파일 복사
+# 소스 코드를 이미지에 복사
 COPY . .
 
-# 스크립트를 실행할 수 있도록 엔트리포인트 설정
-ENTRYPOINT ["python", "main.py"]
+# 스크립트를 실행할 기본 명령어 설정
+CMD ["python", "main.py"]

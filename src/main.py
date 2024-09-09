@@ -4,6 +4,9 @@ import sys
 import hashlib
 import os
 import re
+from scapy.all import sniff, wrpcap
+import threading
+import signal
 
 # 파일 시그니처 정의
 FILE_SIGNATURES = {
@@ -98,6 +101,11 @@ RANSOMWARE_EXTENSIONS = [
     'kaseya', 'kaseyacrypt', 'blackcat', 'alphv', 'lorenz', 'lockbit', 'abcd', 'lukitus', 'moqs', 'thunderx'
 
 ]
+
+# 네트워크 패킷 캡처와 악성 패킷 필터링 기능
+stop_sniffing = False  # 패킷 캡처 중지 플래그
+pcap_file = 'captured_packets.pcap'  # 패킷 저장 파일
+CANARY_VALUE = b'ANTISIG'  # 카나리 값 (특정한 값으로 설정)
 
 def print_ascii_art():  # 프로그램 시작시 표기될 아스키아트 (ANTI SIGNATURE)
 
@@ -309,6 +317,138 @@ def remove_anti_debugging_and_obfuscation(file_path):   # 안티디버깅 기법
         f.write(content)
 
     print("안티디버깅 및 난독화 기법이 성공적으로 제거되었습니다.")
+    
+def insert_canary(file_path):  # 파일에 카나리 값을 삽입하는 함수
+    
+    print(f"파일에 삽입된 카나리 값: {CANARY_VALUE.hex()}")
+    
+    try:
+    
+        with open(file_path, 'rb+') as f:
+    
+            f.seek(0, os.SEEK_END)  # 파일 끝으로 이동
+            f.write(b'\x00' * 16)   # 빈 공간 확보 (예제: 16바이트)
+            f.write(CANARY_VALUE)   # 카나리 값 삽입
+    
+            print(f"카나리 값이 {file_path}에 성공적으로 삽입되었습니다.")
+    
+    except FileNotFoundError:
+    
+        print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
+
+def check_canary_integrity(file_path):  # 파일의 카나리 값 무결성을 체크하는 함수
+    
+    try:
+    
+        with open(file_path, 'rb') as f:
+    
+            f.seek(-len(CANARY_VALUE), os.SEEK_END)  # 파일 끝에서 카나리 값 읽기
+    
+            stored_canary = f.read(len(CANARY_VALUE))
+    
+            print(f"파일에서 읽은 카나리 값: {stored_canary.decode()}")
+
+            # 파일의 실제 카나리 값을 검사
+            if stored_canary == CANARY_VALUE:
+    
+                print("카나리 무결성 검증 통과: 파일이 변조되지 않았습니다.")
+    
+            else:
+    
+                print("경고: 카나리 무결성 검증 실패! 파일이 변조되었을 수 있습니다.")
+    
+    except FileNotFoundError:
+    
+        print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
+    
+    except Exception as e:
+    
+        print(f"Error during canary integrity check: {e}")
+        
+def remove_canary(file_path):  # 파일에서 카나리 값을 제거하는 함수
+    
+    try:
+    
+        with open(file_path, 'rb+') as f:
+    
+            f.seek(-len(CANARY_VALUE), os.SEEK_END)  # 파일 끝에서 카나리 값 읽기 위치로 이동
+    
+            stored_canary = f.read(len(CANARY_VALUE))
+
+            if stored_canary == CANARY_VALUE:  # 카나리 값이 일치하는지 확인
+    
+                print(f"카나리 값이 {file_path}에서 감지되었습니다. 제거 중입니다...")
+    
+                f.seek(-len(CANARY_VALUE), os.SEEK_END)  # 카나리 위치로 다시 이동
+                f.truncate(f.tell())  # 파일을 카나리 값 바로 앞에서 자르기
+    
+                print("카나리 값이 성공적으로 제거되었습니다.")
+    
+            else:
+    
+                print("카나리가 파일에 존재하지 않거나 손상되었습니다.")
+    
+    except FileNotFoundError:
+    
+        print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
+    
+    except Exception as e:
+    
+        print(f"Error during canary removal: {e}")
+    
+def signal_handler(sig, frame):
+    
+    global stop_sniffing
+    
+    stop_sniffing = True
+    
+    print("\n패킷 캡처 종료 중...")
+
+def packet_callback(packet):    # 캡처된 각 패킷을 처리하는 콜백 함수.  악성 패킷 필터링 로직을 추가할 수 있습니다.
+    
+    # 패킷 필터링 예제 (악성 패킷 필터링 로직을 추가 가능)
+    if packet.haslayer('TCP') and packet['TCP'].dport == 80:
+        
+        print(f"[INFO] 정상 패킷: {packet.summary()}")
+    else:
+        
+        print(f"[ALERT] 악성 패킷 감지: {packet.summary()}")
+        
+def start_packet_capture():     # 네트워크 패킷을 캡처하고 처리하는 함수.
+    
+    print("네트워크 패킷 캡처 시작 (q 키를 눌러 종료)...")
+    
+    while not stop_sniffing:
+    
+        sniff(prn=packet_callback, store=0, count=10)
+    
+    print("패킷 캡처가 종료되었습니다.")
+
+def monitor_network():  # 네트워크 모니터링 프로세스 시작.
+    
+    global stop_sniffing
+    
+    stop_sniffing = False
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    t = threading.Thread(target=start_packet_capture)
+    
+    t.start()
+    
+    while True:
+    
+        if stop_sniffing:
+    
+            break
+    
+        time.sleep(1)
+    
+    # 패킷을 .pcap 파일로 저장
+    print(f"패킷을 {pcap_file} 파일로 저장 중...")
+    
+    wrpcap(pcap_file, [])  # 여기에 실제 캡처된 패킷을 기록합니다.
+
 
 def main():
     
@@ -316,7 +456,7 @@ def main():
     
     show_loading_effect()
     
-    parser = argparse.ArgumentParser(description="Anti Signature 프로그램: 파일 무결성 검사 도구 및 랜섬웨어 감염 여부 확인")
+    parser = argparse.ArgumentParser(description="Anti Signature 프로그램: 파일 무결성 검사 도구 및 랜섬웨어 감염 여부 확인 도구")
     
     parser.add_argument(
     
@@ -356,6 +496,30 @@ def main():
         help='PE 또는 ELF 파일에서 안티디버깅 및 난독화 기법을 제거합니다.'
     )
     
+    parser.add_argument(
+        '-net', '--network-monitor', 
+        action='store_true', 
+        help='네트워크 모니터링 및 악성 패킷 필터링을 수행합니다.'
+    )
+    
+    parser.add_argument(
+        '-c', '--canary', 
+        action='store_true', 
+        help='파일 내의 빈 공간에 카나리를 추가합니다.'
+    )
+    
+    parser.add_argument(
+        '-ccheck', '--canary-check', 
+        action='store_true', 
+        help='파일의 카나리 무결성을 체크합니다.'
+    )
+    
+    parser.add_argument(
+        '-cd', '--canary-delete',
+        action='store_true',
+        help='파일에서 카나리를 제거합니다.'
+    )
+    
     args = parser.parse_args()
 
     # 파일 경로와 해시 분리
@@ -384,6 +548,22 @@ def main():
         if args.remove_debug:
             
             remove_anti_debugging_and_obfuscation(file_path)
+            
+        if args.canary:
+            
+            insert_canary(file_path)
+        
+        if args.canary_check:
+            
+            check_canary_integrity(file_path)
+            
+        if args.canary_delete:
+            
+            remove_canary(file_path)
+            
+        if args.network_monitor:
+          
+            monitor_network()
     
     else:
 
