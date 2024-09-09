@@ -397,7 +397,8 @@ def remove_canary(file_path):  # 파일에서 카나리 값을 제거하는 함�
     
         print(f"Error during canary removal: {e}")
         
-def process_file_with_cp_option(file_path): # -cp 옵션 실행 함수
+
+def process_file_with_cp_option(file_path):  # cp 옵션 실행 함수
     
     # temp 폴더 생성
     temp_folder = 'temp'
@@ -424,12 +425,38 @@ def process_file_with_cp_option(file_path): # -cp 옵션 실행 함수
         # 기존 시그니처를 exe 시그니처로 변경
         f.seek(0)
         f.write(FILE_SIGNATURES['exe'] + content[len(FILE_SIGNATURES['exe']):])
-    
+
     new_copied_file_path = os.path.splitext(copied_file_path)[0] + '.exe'
     
     os.rename(copied_file_path, new_copied_file_path)
     
     print(f"복사 파일의 시그니처 및 확장자가 {new_copied_file_path}로 변경되었습니다.")
+
+    # 카나리 변조 탐지 및 로그 저장
+    try:
+    
+        print("카나리 변조 감지 대기 중... (종료하려면 Ctrl + C를 누르세요)")
+    
+        time.sleep(5)  # 카나리 변조 감지 전 대기 시간 추가
+
+        while True:
+    
+            if not check_canary_integrity(file_path):
+    
+                with open('integrity_check.log', 'a') as log_file:
+    
+                    log_file.write(f"{file_path}에서 변조가 감지되었습니다.\n")
+    
+                print("변조가 감지되었습니다. 로그 파일에 기록하였습니다.")
+    
+                break
+            
+            time.sleep(5)  # 5초 간격으로 체크
+
+    except KeyboardInterrupt:
+    
+        print("프로세싱이 사용자의 요청(Ctrl + C)으로 종료되었습니다.")
+
     
 def signal_handler(sig, frame):
     
