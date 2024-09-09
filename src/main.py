@@ -7,6 +7,7 @@ import re
 from scapy.all import sniff, wrpcap
 import threading
 import signal
+import shutil
 
 # 파일 시그니처 정의
 FILE_SIGNATURES = {
@@ -395,6 +396,40 @@ def remove_canary(file_path):  # 파일에서 카나리 값을 제거하는 함�
     except Exception as e:
     
         print(f"Error during canary removal: {e}")
+        
+def process_file_with_cp_option(file_path): # -cp 옵션 실행 함수
+    
+    # temp 폴더 생성
+    temp_folder = 'temp'
+    
+    if not os.path.exists(temp_folder):
+    
+        os.makedirs(temp_folder)
+    
+    # 파일 복사
+    copied_file_path = os.path.join(temp_folder, os.path.basename(file_path))
+    
+    shutil.copy2(file_path, copied_file_path)
+    
+    print(f"{file_path}가 {copied_file_path}로 복사되었습니다.")
+
+    # 원본 파일에 카나리 삽입
+    insert_canary(file_path)
+
+    # 복사본 파일의 시그니처 및 확장자 변경
+    with open(copied_file_path, 'rb+') as f:
+    
+        content = f.read()
+    
+        # 기존 시그니처를 exe 시그니처로 변경
+        f.seek(0)
+        f.write(FILE_SIGNATURES['exe'] + content[len(FILE_SIGNATURES['exe']):])
+    
+    new_copied_file_path = os.path.splitext(copied_file_path)[0] + '.exe'
+    
+    os.rename(copied_file_path, new_copied_file_path)
+    
+    print(f"복사 파일의 시그니처 및 확장자가 {new_copied_file_path}로 변경되었습니다.")
     
 def signal_handler(sig, frame):
     
@@ -520,6 +555,12 @@ def main():
         help='파일에서 카나리를 제거합니다.'
     )
     
+    parser.add_argument(
+        '-cp', '--copy-and-process',
+        action='store_true',
+        help='파일을 temp 폴더로 복사한 후 시그니처를 .exe로 변경합니다. (파일 백업)'
+    )
+    
     args = parser.parse_args()
 
     # 파일 경로와 해시 분리
@@ -564,6 +605,10 @@ def main():
         if args.network_monitor:
           
             monitor_network()
+            
+        if args.copy_and_process:
+            
+            process_file_with_cp_option(file_path)
     
     else:
 
