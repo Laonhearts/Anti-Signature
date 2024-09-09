@@ -4,7 +4,7 @@ import sys
 import hashlib
 import os
 import re
-from scapy.all import sniff, wrpcap
+from scapy.all import sniff, wrpcap, IP, TCP, UDP, ICMP
 import threading
 import signal
 import shutil
@@ -100,6 +100,16 @@ RANSOMWARE_EXTENSIONS = [
     'sodinokibi', 'rdp', 'kodg', 'covm', 'cazw', 'egregor', 'revil', 'recovery', 'sodin', 'kodc', 'gdc', 'gdcb', 
     'grb', 'egregor', 'medusalocker', 'medusa', 'phobos', 'ransom', 'makop', 'mountlocker', 'avoslocker', 'cuba', 
     'kaseya', 'kaseyacrypt', 'blackcat', 'alphv', 'lorenz', 'lockbit', 'abcd', 'lukitus', 'moqs', 'thunderx'
+
+]
+
+# 악성 패킷 탐지 패턴 목록
+MALICIOUS_PATTERNS = [
+    
+    {"proto": "TCP", "dport": 4444},  # 예: 일반적으로 악성 활동에 사용되는 포트
+    {"proto": "TCP", "flags": "FPU"},  # 예: 비정상적인 플래그 조합
+    {"proto": "UDP", "dport": 53413},  # 예: UDP에서 흔히 사용되는 악성 포트
+    {"proto": "ICMP", "type": 8, "code": 0},  # 예: ICMP Echo Request 공격
 
 ]
 
@@ -499,50 +509,93 @@ def signal_handler(sig, frame):
     
     print("\n패킷 캡처 종료 중...")
 
-def packet_callback(packet):    # 캡처된 각 패킷을 처리하는 콜백 함수.  악성 패킷 필터링 로직을 추가할 수 있습니다.
+def check_packet_for_malicious_activity(packet):    # 패킷이 악성 활동과 관련된지를 확인하는 함수.
     
-    # 패킷 필터링 예제 (악성 패킷 필터링 로직을 추가 가능)
-    if packet.haslayer('TCP') and packet['TCP'].dport == 80:
+    if packet.haslayer(IP):
         
-        print(f"[INFO] 정상 패킷: {packet.summary()}")
-    else:
+        ip_layer = packet[IP]
+        
+        # TCP 패킷 검사
+        if packet.haslayer(TCP):
+            
+            tcp_layer = packet[TCP]
+            
+            for pattern in MALICIOUS_PATTERNS:
+            
+                if pattern["proto"] == "TCP" and (pattern.get("dport") is None or tcp_layer.dport == pattern["dport"]):
+            
+                    if "flags" in pattern and pattern["flags"] in tcp_layer.flags:
+            
+                        return True
+            
+                    elif "flags" not in pattern:
+            
+                        return True
+
+        # UDP 패킷 검사
+        if packet.haslayer(UDP):
+            
+            udp_layer = packet[UDP]
+            
+            for pattern in MALICIOUS_PATTERNS:
+            
+                if pattern["proto"] == "UDP" and (pattern.get("dport") is None or udp_layer.dport == pattern["dport"]):
+            
+                    return True
+
+        # ICMP 패킷 검사
+        if packet.haslayer(ICMP):
+            
+            icmp_layer = packet[ICMP]
+            
+            for pattern in MALICIOUS_PATTERNS:
+                
+                if pattern["proto"] == "ICMP" and (pattern.get("type") is None or icmp_layer.type == pattern["type"]) and (pattern.get("code") is None or icmp_layer.code == pattern["code"]):
+                    
+                    return True
+
+    return False
+
+def packet_callback(packet):    # 캡처된 각 패킷을 처리하는 콜백 함수.
+    
+    
+    if check_packet_for_malicious_activity(packet):
         
         print(f"[ALERT] 악성 패킷 감지: {packet.summary()}")
+    else:
         
+        print(f"[INFO] 정상 패킷: {packet.summary()}")
+
 def start_packet_capture():     # 네트워크 패킷을 캡처하고 처리하는 함수.
     
-    print("네트워크 패킷 캡처 시작 (q 키를 눌러 종료)...")
     
-    while not stop_sniffing:
-    
-        sniff(prn=packet_callback, store=0, count=10)
-    
-    print("패킷 캡처가 종료되었습니다.")
+    print("네트워크 패킷 캡처 시작 (Ctrl + C로 종료)...")
 
-def monitor_network():  # 네트워크 모니터링 프로세스 시작.
+    try:
+        
+        sniff(prn=packet_callback, store=0)
+    
+    except KeyboardInterrupt:
+        
+        print("패킷 캡처가 종료되었습니다.")
+
+def monitor_network():  # 네트워크 모니터링 프로세스 함수
     
     global stop_sniffing
     
     stop_sniffing = False
-    
     signal.signal(signal.SIGINT, signal_handler)
-    
+
     t = threading.Thread(target=start_packet_capture)
-    
     t.start()
-    
-    while True:
-    
-        if stop_sniffing:
-    
-            break
+
+    while not stop_sniffing:
     
         time.sleep(1)
-    
-    # 패킷을 .pcap 파일로 저장
+
     print(f"패킷을 {pcap_file} 파일로 저장 중...")
     
-    wrpcap(pcap_file, [])  # 여기에 실제 캡처된 패킷을 기록합니다.
+    wrpcap(pcap_file, [])  # 실제 캡처된 패킷을 기록합니다.
 
 
 def main():
