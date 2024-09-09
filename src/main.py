@@ -406,7 +406,7 @@ def process_file_with_cp_option(file_path):  # cp 옵션 실행 함수
     if not os.path.exists(temp_folder):
     
         os.makedirs(temp_folder)
-    
+
     # 파일 복사
     copied_file_path = os.path.join(temp_folder, os.path.basename(file_path))
     
@@ -441,22 +441,55 @@ def process_file_with_cp_option(file_path):  # cp 옵션 실행 함수
 
         while True:
     
-            if not check_canary_integrity(file_path):
+            # 파일에 대한 락을 시도
     
-                with open('integrity_check.log', 'a') as log_file:
+            with open(file_path, 'rb') as f:
     
-                    log_file.write(f"{file_path}에서 변조가 감지되었습니다.\n")
+                try:
     
-                print("변조가 감지되었습니다. 로그 파일에 기록하였습니다.")
-    
-                break
-            
+                    # 파일의 끝에서부터 카나리 위치로 이동하여 값을 확인
+                    f.seek(-len(CANARY_VALUE), os.SEEK_END)
+                    
+                    stored_canary = f.read(len(CANARY_VALUE))
+
+                    # 삽입한 카나리 값과 비교
+                    if stored_canary != CANARY_VALUE:
+                    
+                        with open('integrity_check.log', 'a') as log_file:
+                    
+                            log_file.write(f"{file_path}에서 변조가 감지되었습니다.\n")
+                    
+                        print("변조가 감지되었습니다. 로그 파일에 기록하였습니다.")
+                    
+                        break
+
+                except IOError as e:
+                    
+                    print(f"파일 접근 중 오류 발생: {e}")
+
             time.sleep(5)  # 5초 간격으로 체크
 
     except KeyboardInterrupt:
-    
+        
         print("프로세싱이 사용자의 요청(Ctrl + C)으로 종료되었습니다.")
 
+def insert_canary(file_path):  # 파일에 카나리 값을 삽입하는 함수
+    
+    print(f"파일에 삽입된 카나리 값: {CANARY_VALUE.hex()}")
+    
+    try:
+    
+        with open(file_path, 'rb+') as f:
+    
+            f.seek(0, os.SEEK_END)  # 파일 끝으로 이동
+            f.write(b'\x00' * 16)   # 빈 공간 확보 (예제: 16바이트)
+            f.write(CANARY_VALUE)   # 카나리 값 삽입
+    
+            print(f"카나리 값이 {file_path}에 성공적으로 삽입되었습니다.")
+    
+    except FileNotFoundError:
+    
+        print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
     
 def signal_handler(sig, frame):
     
@@ -644,3 +677,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+
