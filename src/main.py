@@ -4,9 +4,12 @@ import sys
 import hashlib
 import os
 import re
+import mysql.connector  # MySQL 연결용
+import cx_Oracle  # Oracle 연결용
 from scapy.all import sniff, wrpcap, IP, TCP, UDP, ICMP
 import threading
 import signal
+from datetime import datetime
 import shutil
 
 # 파일 시그니처 정의
@@ -118,6 +121,10 @@ stop_sniffing = False  # 패킷 캡처 중지 플래그
 pcap_file = 'captured_packets.pcap'  # 패킷 저장 파일
 CANARY_VALUE = b'ANTISIG'  # 카나리 값 (특정한 값으로 설정)
 
+# DB 연결 객체
+db_conn = None
+cursor = None
+
 def print_ascii_art():  # 프로그램 시작시 표기될 아스키아트 (ANTI SIGNATURE)
 
     ascii_art = """
@@ -163,6 +170,81 @@ def calculate_file_hash(file_path, hash_algorithm='sha256'):    # 파일 해시 
         return None
 
     return hash_func.hexdigest()
+
+def connect_to_db(db_type):
+    
+    global db_conn, cursor
+    
+    if db_type == 'mysql':
+    
+        # MySQL 연결 설정
+        db_conn = mysql.connector.connect(
+    
+            host="localhost",
+            user="root",
+            password="",
+            port = 3306
+                
+        )
+    
+    elif db_type == 'oracle':
+    
+        # Oracle 연결 설정
+        dsn_tns = cx_Oracle.makedsn('localhost', '1521', service_name='your_oracle_service')
+    
+        db_conn = cx_Oracle.connect(user='your_oracle_user', password='your_oracle_password', dsn=dsn_tns)
+    
+    cursor = db_conn.cursor()
+    
+    print(f"{db_type.upper()} 데이터베이스에 연결되었습니다.")
+
+def insert_file_integrity_log(file_name, action, status):   # 파일 무결성, 랜섬웨어 감염 여부, 안티디버깅 등과 관련된 로그를 DB에 삽입하는 함수
+    
+    if cursor:
+        
+        timestamp = datetime.now()
+        
+        if isinstance(db_conn, mysql.connector.connection.MySQLConnection):
+        
+            query = "INSERT INTO file_integrity_logs (file_name, action, status, timestamp) VALUES (%s, %s, %s, %s)"
+        
+            values = (file_name, action, status, timestamp)
+        
+        else:
+        
+            query = "INSERT INTO file_integrity_logs (file_name, action, status, timestamp) VALUES (:1, :2, :3, :4)"
+        
+            values = (file_name, action, status, timestamp)
+        
+        cursor.execute(query, values)
+        
+        db_conn.commit()
+        
+        print(f"파일 무결성 로그가 저장되었습니다: {file_name}, {action}, {status}, {timestamp}")
+
+def insert_file_signature_log(file_name, signature_before, signature_after): # 파일 시그니처 변경 로그를 DB에 삽입하는 함수
+    
+    if cursor:
+        
+        timestamp = datetime.now()
+        
+        if isinstance(db_conn, mysql.connector.connection.MySQLConnection):
+        
+            query = "INSERT INTO file_signature_logs (file_name, signature_before, signature_after, timestamp) VALUES (%s, %s, %s, %s)"
+        
+            values = (file_name, signature_before, signature_after, timestamp)
+        
+        else:
+        
+            query = "INSERT INTO file_signature_logs (file_name, signature_before, signature_after, timestamp) VALUES (:1, :2, :3, :4)"
+        
+            values = (file_name, signature_before, signature_after, timestamp)
+        
+        cursor.execute(query, values)
+        
+        db_conn.commit()
+        
+        print(f"파일 시그니처 로그가 저장되었습니다: {file_name}, {signature_before}, {signature_after}, {timestamp}")
 
 def check_file_integrity(file_path, expected_hash=None):    # 파일 무결성 확인
     
@@ -674,6 +756,17 @@ def main():
         help='파일을 temp 폴더로 복사한 후 시그니처를 .exe로 변경합니다. (파일 백업)'
     )
     
+    parser.add_argument(
+        '-db', '--database', 
+        choices=['mysql', 'oracle'], 
+        help='DB 선택 (MySQL 또는 Oracle)'
+    )
+    parser.add_argument(
+        '-dbi', '--db-info', 
+        action='store_true', 
+        help='DB에 로그 정보 저장'
+    )
+    
     args = parser.parse_args()
 
     # 파일 경로와 해시 분리
@@ -726,6 +819,13 @@ def main():
     else:
 
         parser.print_help()
+        
+    if args.database:
+        
+        connect_to_db(args.database)
+    else:
+        
+        print("\n 데이터베이스를 선택하려면 -db 옵션에 'mysql' 또는 'oracle'을 입력하세요. \n")
 
 if __name__ == "__main__":
 
