@@ -737,15 +737,18 @@ def monitor_network():  # 네트워크 모니터링 프로세스 함수.
     
         print("저장할 패킷이 없습니다.")
         
-def get_extension_from_signature(file_signature):
-    """
-    파일 시그니처 정보를 기반으로 적합한 확장자를 반환하는 함수
-    """
+def get_extension_from_signature(file_signature):  #  파일 시그니처 정보를 기반으로 적합한 확장자를 반환하는 함수
+    
     for ext, sigs in FILE_SIGNATURES.items():
+    
         if not isinstance(sigs, list):
+    
             sigs = [sigs]  # 시그니처가 리스트가 아닌 경우 리스트로 변환
+    
         if any(file_signature.startswith(sig) for sig in sigs):
+    
             return ext
+    
     return None  # 시그니처와 일치하는 확장자가 없을 경우
 
 def process_replace_option(file_path):  # replace 옵션 실행 함수    # 파일의 시그니처를 분석하여 적절한 확장자로 파일을 변경하는 함수
@@ -780,6 +783,7 @@ def process_replace_option(file_path):  # replace 옵션 실행 함수    # 파�
 def main():
     
     print_ascii_art()
+    
     show_loading_effect()
 
     parser = argparse.ArgumentParser(description="Anti Signature 프로그램: 파일 무결성 검사 도구 및 랜섬웨어 감염 여부 확인 도구")
