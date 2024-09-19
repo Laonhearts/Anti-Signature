@@ -5,7 +5,6 @@ import hashlib
 import os
 import re
 import mysql.connector  # MySQL 연결용
-import cx_Oracle  # Oracle 연결용
 from scapy.all import sniff, wrpcap, IP, TCP, UDP, ICMP
 import threading
 import signal
@@ -113,12 +112,16 @@ MALICIOUS_PATTERNS = [
     {"proto": "TCP", "flags": "FPU"},  # 예: 비정상적인 플래그 조합
     {"proto": "UDP", "dport": 53413},  # 예: UDP에서 흔히 사용되는 악성 포트
     {"proto": "ICMP", "type": 8, "code": 0},  # 예: ICMP Echo Request 공격
+    {"proto": "TCP", "dport": 8080},  # 8080 포트에서의 TCP 통신 감지
+    {"proto": "UDP", "sport": 12345}  # 12345 포트에서의 UDP 통신 감지
 
 ]
 
 # 네트워크 패킷 캡처와 악성 패킷 필터링 기능
 stop_sniffing = False  # 패킷 캡처 중지 플래그
-pcap_file = 'captured_packets.pcap'  # 패킷 저장 파일
+captured_packets = []  # 캡처된 패킷을 저장할 리스트
+pcap_file = 'packets.pcap'  # 패킷 저장 파일
+
 CANARY_VALUE = b'ANTISIG'  # 카나리 값 (특정한 값으로 설정)
 
 # DB 연결 객체
@@ -183,20 +186,34 @@ def connect_to_db(db_type):
             host="localhost",
             user="root",
             password="",
+            database="signature",  # 연결할 데이터베이스 이름으로 변경
             port = 3306
                 
         )
     
-    elif db_type == 'oracle':
-    
-        # Oracle 연결 설정
-        dsn_tns = cx_Oracle.makedsn('localhost', '1521', service_name='your_oracle_service')
-    
-        db_conn = cx_Oracle.connect(user='your_oracle_user', password='your_oracle_password', dsn=dsn_tns)
-    
     cursor = db_conn.cursor()
     
     print(f"{db_type.upper()} 데이터베이스에 연결되었습니다.")
+    
+def insert_operation_log(operation, details, status):
+    
+    if cursor:
+    
+        timestamp = datetime.now()
+
+        # MySQL 쿼리: 자리 표시자를 %s로 변경
+        query = "INSERT INTO operation_logs (operation, details, status, timestamp) VALUES (%s, %s, %s, %s)"
+        values = (operation, details, status, timestamp)
+
+        # 쿼리와 값을 출력하여 디버깅
+        print(f"Executing query: {query}")
+        print(f"With values: {values}")
+
+        cursor.execute(query, values)
+        db_conn.commit()
+
+        print(f"로그가 저장되었습니다: {operation}, {details}, {status}, {timestamp}")
+
 
 def insert_file_integrity_log(file_name, action, status):   # 파일 무결성, 랜섬웨어 감염 여부, 안티디버깅 등과 관련된 로그를 DB에 삽입하는 함수
     
@@ -246,101 +263,108 @@ def insert_file_signature_log(file_name, signature_before, signature_after): # �
         
         print(f"파일 시그니처 로그가 저장되었습니다: {file_name}, {signature_before}, {signature_after}, {timestamp}")
 
-def check_file_integrity(file_path, expected_hash=None):    # 파일 무결성 확인
+def check_file_integrity(file_path, expected_hash=None):
     
     try:
-    
+
         with open(file_path, 'rb') as f:
-    
+
             file_signature = f.read(20)
-    
+
     except FileNotFoundError:
-    
+
         print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
-    
+
+        insert_operation_log("File Integrity Check", file_path, "File Not Found")
+
         return
-    
-    # 파일 확장자 추출
+
     file_extension = file_path.split('.')[-1].lower()
 
-    # 랜섬웨어 관련 확장자 확인
-    is_ransomware_extension = file_extension in RANSOMWARE_EXTENSIONS
-
-    # 파일 시그니처와 확장자 비교
     suspicious = False
-    
+
     if file_extension in FILE_SIGNATURES:
-        
+
         expected_signatures = FILE_SIGNATURES[file_extension]
-        
+
         if not isinstance(expected_signatures, list):
-        
+
             expected_signatures = [expected_signatures]
         
         if any(file_signature.startswith(sig) for sig in expected_signatures):
-        
-            print(f"{file_path}의 파일 시그니처가 정상입니다. 파일 형식: {file_extension.upper()}")
-        
+
+            print(f"{file_path}의 파일 시그니처가 정상입니다.")
+
+            insert_operation_log("File Integrity Check", file_path, "Passed")
+
         else:
-        
-            print(f"경고: {file_path}의 파일 시그니처가 예상과 다릅니다. 파일 형식: {file_extension.upper()}")
-        
+
+            print(f"경고: {file_path}의 파일 시그니처가 예상과 다릅니다.")
+
             suspicious = True
-    
+
+            insert_operation_log("File Integrity Check", file_path, "Signature Mismatch")
+
     else:
-        
+
         print(f"알 수 없는 확장자입니다: {file_extension}")
-        
+
         suspicious = True
 
-    # 파일이 손상되거나 암호화된 것으로 의심되는 경우
-    if suspicious:
-        
-        if is_ransomware_extension:
-        
-            print(f"경고: {file_path}의 파일이 암호화되었거나 손상된 것으로 보입니다. 랜섬웨어에 감염된 파일입니다.")
-        
-        else:
-        
-            print(f"경고: {file_path}의 파일이 암호화되었거나 손상된 것으로 보입니다. 랜섬웨어 감염 의심 파일입니다.")
+        insert_operation_log("File Integrity Check", file_path, "Unknown Extension")
 
-    # 해시 무결성 검사 수행
+    if suspicious:
+
+        insert_operation_log("File Integrity Check", file_path, "Suspicious")
+
     if expected_hash:
-        
+
         calculated_hash = calculate_file_hash(file_path)
-        
+
         if calculated_hash and calculated_hash != expected_hash:
-        
+
             print(f"경고: {file_path}의 파일 해시 무결성이 훼손되었습니다.")
-        
+
+            insert_operation_log("File Integrity Check", file_path, "Hash Mismatch")
+
         elif calculated_hash:
-        
+
             print(f"{file_path}의 파일 해시가 무결합니다.")
 
-def check_for_ransomware(file_path):    # 파일 이름 패턴 분석
-    
+            insert_operation_log("File Integrity Check", file_path, "Hash Match")
+
+
+
+def check_for_ransomware(file_path):
+
     file_name = file_path.split('/')[-1].lower()
-    
+
     suspicious = False
-    
-    # 랜섬웨어 의심 확장자
+
     if any(ext in file_name for ext in RANSOMWARE_EXTENSIONS):
-        
+
         print(f"경고: {file_path}는 랜섬웨어와 관련된 확장자를 포함하고 있습니다.")
-        
+
         suspicious = True
-    
-    # 랜섬웨어 의심 이름 패턴
+
+        insert_operation_log("Ransomware Detection", file_path, "Suspicious Extension")
+
     if "readme" in file_name or "decrypt" in file_name:
-        
-        print(f"경고: {file_path}는 랜섬웨어 관련 파일일 수 있습니다 (이름 패턴 감지됨).")
-        
+
+        print(f"경고: {file_path}는 랜섬웨어 관련 파일일 수 있습니다.")
+
         suspicious = True
-    
+
+        insert_operation_log("Ransomware Detection", file_path, "Suspicious File Name")
+
     if not suspicious:
-        
+
         print(f"{file_path}는 랜섬웨어에 감염되지 않은 정상 파일입니다.")
-        
+
+        insert_operation_log("Ransomware Detection", file_path, "Clean")
+
+    return suspicious
+
 def apply_anti_debugging_and_obfuscation(file_path):  # PE 또는 ELF 파일에 안티디버깅 및 난독화 기법을 적용하는 함수
     
     if not os.path.exists(file_path):
@@ -492,12 +516,24 @@ def remove_canary(file_path):  # 파일에서 카나리 값을 제거하는 함�
 
 def process_file_with_cp_option(file_path):  # cp 옵션 실행 함수
     
-    # temp 폴더 생성
     temp_folder = 'temp'
-    
+
+    # temp 폴더 생성
     if not os.path.exists(temp_folder):
     
         os.makedirs(temp_folder)
+
+    # 파일 확장자 추출
+    original_extension = os.path.splitext(file_path)[1]
+
+    # 확장자 정보를 temp 폴더에 txt 파일로 저장
+    extension_info_file = os.path.join(temp_folder, os.path.basename(file_path) + "_extension.txt")
+    
+    with open(extension_info_file, 'w') as f:
+    
+        f.write(original_extension)
+    
+    print(f"원본 파일의 확장자가 {extension_info_file}에 저장되었습니다: {original_extension}")
 
     # 파일 복사
     copied_file_path = os.path.join(temp_folder, os.path.basename(file_path))
@@ -506,69 +542,72 @@ def process_file_with_cp_option(file_path):  # cp 옵션 실행 함수
     
     print(f"{file_path}가 {copied_file_path}로 복사되었습니다.")
 
-    # 원본 파일에 카나리 삽입
-    insert_canary(file_path)
-
-    # 복사본 파일의 시그니처 및 확장자 변경
-    with open(copied_file_path, 'rb+') as f:
-    
-        content = f.read()
-    
-        # 기존 시그니처를 exe 시그니처로 변경
-        f.seek(0)
-        f.write(FILE_SIGNATURES['exe'] + content[len(FILE_SIGNATURES['exe']):])
-
-    new_copied_file_path = os.path.splitext(copied_file_path)[0] + '.exe'
+    # 파일 확장자를 .dll로 변경
+    new_copied_file_path = os.path.splitext(copied_file_path)[0] + '.dll'
     
     os.rename(copied_file_path, new_copied_file_path)
     
-    print(f"복사 파일의 시그니처 및 확장자가 {new_copied_file_path}로 변경되었습니다.")
+    print(f"복사 파일의 확장자가 {new_copied_file_path}로 변경되었습니다.")
 
-    # 카나리 변조 탐지 및 로그 저장
-    try:
-    
-        print("카나리 변조 감지 대기 중... (종료하려면 Ctrl + C를 누르세요)")
-    
-        time.sleep(5)  # 카나리 변조 감지 전 대기 시간 추가
+    # 원본 파일에 카나리 삽입
+    insert_canary(file_path)
 
-        while True:
+def process_back_option(file_path):  # back 옵션 실행 함수
     
-            # 파일에 대한 락을 시도
+    temp_folder = 'temp'
+
+    # temp 폴더에서 확장자 정보를 읽어오기
+    extension_info_file = os.path.join(temp_folder, os.path.basename(file_path) + "_extension.txt")
     
-            with open(file_path, 'rb') as f:
+    if not os.path.exists(extension_info_file):
     
-                try:
+        print(f"확장자 정보 파일을 찾을 수 없습니다: {extension_info_file}")
     
-                    # 파일의 끝에서부터 카나리 위치로 이동하여 값을 확인
-                    f.seek(-len(CANARY_VALUE), os.SEEK_END)
-                    
-                    stored_canary = f.read(len(CANARY_VALUE))
+        return
 
-                    # 삽입한 카나리 값과 비교
-                    if stored_canary != CANARY_VALUE:
-                    
-                        with open('integrity_check.log', 'a') as log_file:
-                    
-                            log_file.write(f"{file_path}에서 변조가 감지되었습니다.\n")
-                    
-                        print("변조가 감지되었습니다. 로그 파일에 기록하였습니다.")
-                    
-                        break
+    with open(extension_info_file, 'r') as f:
+    
+        original_extension = f.read().strip()
+    
+    print(f"원본 파일의 확장자 정보가 {extension_info_file}에서 읽혔습니다: {original_extension}")
 
-                except IOError as e:
-                    
-                    print(f"파일 접근 중 오류 발생: {e}")
+    # temp 폴더에서 .dll 파일을 .txt로 되돌림
+    copied_file_path = os.path.join(temp_folder, os.path.basename(file_path).replace('.dll', '.txt'))
+    
+    new_file_path = os.path.join(temp_folder, os.path.splitext(os.path.basename(file_path))[0] + original_extension)
+    
+    if not os.path.exists(copied_file_path):
+    
+        print(f"복사된 .dll 파일을 찾을 수 없습니다: {copied_file_path}")
+    
+        return
 
-            time.sleep(5)  # 5초 간격으로 체크
+    # .dll 확장자에서 .txt로 되돌림
+    os.rename(copied_file_path, new_file_path)
+    
+    print(f"{copied_file_path}가 {new_file_path}로 확장자가 변경되었습니다.")
 
-    except KeyboardInterrupt:
-        
-        print("프로세싱이 사용자의 요청(Ctrl + C)으로 종료되었습니다.")
+    # 원본 파일 복원
+    exe_file_path = os.path.splitext(file_path)[0] + '.exe'
+    
+    if os.path.exists(exe_file_path):
+    
+        final_file_path = os.path.splitext(exe_file_path)[0] + original_extension
+    
+        os.rename(exe_file_path, final_file_path)
+    
+        print(f"{exe_file_path}가 {final_file_path}로 원본 확장자로 복원되었습니다.")
+    
+    else:
+    
+        print(f"변경된 exe 파일을 찾을 수 없습니다: {exe_file_path}")
 
 def insert_canary(file_path):  # 파일에 카나리 값을 삽입하는 함수
     
-    print(f"파일에 삽입된 카나리 값: {CANARY_VALUE.hex()}")
+    CANARY_VALUE = b'ANTISIG'
     
+    print(f"파일에 삽입된 카나리 값: {CANARY_VALUE.hex()}")
+
     try:
     
         with open(file_path, 'rb+') as f:
@@ -577,11 +616,13 @@ def insert_canary(file_path):  # 파일에 카나리 값을 삽입하는 함수
             f.write(b'\x00' * 16)   # 빈 공간 확보 (예제: 16바이트)
             f.write(CANARY_VALUE)   # 카나리 값 삽입
     
-            print(f"카나리 값이 {file_path}에 성공적으로 삽입되었습니다.")
+        print(f"카나리 값이 {file_path}에 성공적으로 삽입되었습니다.")
     
     except FileNotFoundError:
     
         print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
+    
+    print(f"파일에 삽입된 카나리 값: {CANARY_VALUE.hex()}")
     
 def signal_handler(sig, frame):
     
@@ -591,101 +632,156 @@ def signal_handler(sig, frame):
     
     print("\n패킷 캡처 종료 중...")
 
-def check_packet_for_malicious_activity(packet):    # 패킷이 악성 활동과 관련된지를 확인하는 함수.
-    
+def check_packet_for_malicious_activity(packet):
+
     if packet.haslayer(IP):
-        
-        ip_layer = packet[IP]
-        
-        # TCP 패킷 검사
+
         if packet.haslayer(TCP):
-            
+
             tcp_layer = packet[TCP]
-            
+
             for pattern in MALICIOUS_PATTERNS:
-            
+
                 if pattern["proto"] == "TCP" and (pattern.get("dport") is None or tcp_layer.dport == pattern["dport"]):
-            
+
                     if "flags" in pattern and pattern["flags"] in tcp_layer.flags:
-            
-                        return True
-            
-                    elif "flags" not in pattern:
-            
+
+                        insert_operation_log("Network Monitoring", "TCP Packet Detected", "Malicious")
+
                         return True
 
-        # UDP 패킷 검사
         if packet.haslayer(UDP):
-            
+
             udp_layer = packet[UDP]
-            
+
             for pattern in MALICIOUS_PATTERNS:
-            
+
                 if pattern["proto"] == "UDP" and (pattern.get("dport") is None or udp_layer.dport == pattern["dport"]):
-            
+
+                    insert_operation_log("Network Monitoring", "UDP Packet Detected", "Malicious")
+
                     return True
 
-        # ICMP 패킷 검사
         if packet.haslayer(ICMP):
-            
+
             icmp_layer = packet[ICMP]
-            
+
             for pattern in MALICIOUS_PATTERNS:
-                
-                if pattern["proto"] == "ICMP" and (pattern.get("type") is None or icmp_layer.type == pattern["type"]) and (pattern.get("code") is None or icmp_layer.code == pattern["code"]):
-                    
+
+                if pattern["proto"] == "ICMP" and (pattern.get("type") is None or icmp_layer.type == pattern["type"]):
+
+                    insert_operation_log("Network Monitoring", "ICMP Packet Detected", "Malicious")
+
                     return True
+
+    insert_operation_log("Network Monitoring", "Packet Detected", "Normal")
 
     return False
 
+
 def packet_callback(packet):    # 캡처된 각 패킷을 처리하는 콜백 함수.
     
+    global captured_packets
     
+    captured_packets.append(packet)  # 캡처된 패킷 저장
+
     if check_packet_for_malicious_activity(packet):
         
-        print(f"[ALERT] 악성 패킷 감지: {packet.summary()}")
+        print(f"[ALERT] 악성 의심 패킷 감지: {packet.summary()}")
+    
     else:
         
         print(f"[INFO] 정상 패킷: {packet.summary()}")
-
+        
 def start_packet_capture():     # 네트워크 패킷을 캡처하고 처리하는 함수.
     
-    
     print("네트워크 패킷 캡처 시작 (Ctrl + C로 종료)...")
-
+    
     try:
-        
-        sniff(prn=packet_callback, store=0)
+    
+        sniff(prn=packet_callback, store=0)  # 실시간으로 패킷 캡처
     
     except KeyboardInterrupt:
-        
+    
         print("패킷 캡처가 종료되었습니다.")
 
-def monitor_network():  # 네트워크 모니터링 프로세스 함수
+def monitor_network():  # 네트워크 모니터링 프로세스 함수.
     
     global stop_sniffing
-    
+
     stop_sniffing = False
+
+    def signal_handler(sig, frame):
+    
+        global stop_sniffing
+    
+        stop_sniffing = True
+    
+        print("\n패킷 캡처 종료 중...")
+
+    # Ctrl + C 입력시 signal handler 등록
     signal.signal(signal.SIGINT, signal_handler)
 
-    t = threading.Thread(target=start_packet_capture)
-    t.start()
+    # sniff 종료 조건 설정: stop_sniffing이 True가 되면 종료
+    sniff(prn=packet_callback, store=0, stop_filter=lambda x: stop_sniffing)
 
-    while not stop_sniffing:
+    print(f"캡처된 패킷을 {pcap_file} 파일로 저장 중...")
+
+    if captured_packets:
     
-        time.sleep(1)
-
-    print(f"패킷을 {pcap_file} 파일로 저장 중...")
+        wrpcap(pcap_file, captured_packets)  # 캡처된 패킷을 pcap 파일로 저장
     
-    wrpcap(pcap_file, [])  # 실제 캡처된 패킷을 기록합니다.
+        print(f"{len(captured_packets)}개의 패킷이 저장되었습니다.")
+    
+    else:
+    
+        print("저장할 패킷이 없습니다.")
+        
+def get_extension_from_signature(file_signature):
+    """
+    파일 시그니처 정보를 기반으로 적합한 확장자를 반환하는 함수
+    """
+    for ext, sigs in FILE_SIGNATURES.items():
+        if not isinstance(sigs, list):
+            sigs = [sigs]  # 시그니처가 리스트가 아닌 경우 리스트로 변환
+        if any(file_signature.startswith(sig) for sig in sigs):
+            return ext
+    return None  # 시그니처와 일치하는 확장자가 없을 경우
 
+def process_replace_option(file_path):  # replace 옵션 실행 함수    # 파일의 시그니처를 분석하여 적절한 확장자로 파일을 변경하는 함수
+    
+    try:
+        
+        # 파일 시그니처 읽기
+        with open(file_path, 'rb') as f:
+        
+            file_signature = f.read(20)  # 첫 20바이트를 시그니처로 사용
+
+        # 시그니처 기반 확장자 결정
+        detected_extension = get_extension_from_signature(file_signature)
+
+        if detected_extension:
+        
+            # 파일 확장자 변경
+            new_file_path = os.path.splitext(file_path)[0] + '.' + detected_extension
+        
+            os.rename(file_path, new_file_path)
+        
+            print(f"파일의 확장자가 {new_file_path}로 변경되었습니다. (시그니처: {detected_extension.upper()})")
+        
+        else:
+        
+            print(f"알 수 없는 시그니처입니다. 확장자를 결정할 수 없습니다: {file_signature.hex()}")
+
+    except FileNotFoundError:
+        
+        print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
 
 def main():
     
     print_ascii_art()
-    
     show_loading_effect()
-    
+
     parser = argparse.ArgumentParser(description="Anti Signature 프로그램: 파일 무결성 검사 도구 및 랜섬웨어 감염 여부 확인 도구")
     
     parser.add_argument(
@@ -698,6 +794,14 @@ def main():
     
     parser.add_argument(
     
+        '-replace', '--replace', 
+        action='store_true', 
+        help='파일의 시그니처를 기반으로 확장자를 변경합니다.'
+    
+    )
+    
+    parser.add_argument(
+    
         '-R', '--ransomware', 
         action='store_true', 
         help='파일의 랜섬웨어 감염 여부를 확인합니다.'
@@ -705,7 +809,7 @@ def main():
     )
     
     parser.add_argument(
-        
+    
         '-D', '--apply-debug', 
         action='store_true', 
         help='PE 또는 ELF 파일에 안티디버깅 및 난독화 기법을 적용합니다.'
@@ -713,7 +817,7 @@ def main():
     )
     
     parser.add_argument(
-        
+    
         '-dd', '--detect-debug', 
         action='store_true', 
         help='PE 또는 ELF 파일에 안티디버깅 및 난독화 기법이 적용되었는지 확인합니다.'
@@ -721,113 +825,167 @@ def main():
     )
     
     parser.add_argument(
+    
         '-dx', '--remove-debug', 
         action='store_true', 
         help='PE 또는 ELF 파일에서 안티디버깅 및 난독화 기법을 제거합니다.'
+    
     )
     
     parser.add_argument(
+    
         '-net', '--network-monitor', 
         action='store_true', 
         help='네트워크 모니터링 및 악성 패킷 필터링을 수행합니다.'
+    
     )
     
     parser.add_argument(
+    
         '-c', '--canary', 
         action='store_true', 
         help='파일 내의 빈 공간에 카나리를 추가합니다.'
+    
     )
     
     parser.add_argument(
+    
         '-ccheck', '--canary-check', 
         action='store_true', 
         help='파일의 카나리 무결성을 체크합니다.'
+    
     )
     
     parser.add_argument(
+    
         '-cd', '--canary-delete',
         action='store_true',
         help='파일에서 카나리를 제거합니다.'
+    
     )
     
     parser.add_argument(
+    
         '-cp', '--copy-and-process',
         action='store_true',
         help='파일을 temp 폴더로 복사한 후 시그니처를 .exe로 변경합니다. (파일 백업)'
+    
     )
     
     parser.add_argument(
+    
         '-db', '--database', 
-        choices=['mysql', 'oracle'], 
-        help='DB 선택 (MySQL 또는 Oracle)'
+        choices=['mysql'], 
+        help='DB 선택 (MySQL)'
+    
     )
+    
     parser.add_argument(
+    
         '-dbi', '--db-info', 
         action='store_true', 
         help='DB에 로그 정보 저장'
+    
     )
     
     args = parser.parse_args()
 
-    # 파일 경로와 해시 분리
+    # DB 연결 설정
+    if args.database:
+    
+        connect_to_db(args.database)
+    
+    # 파일 관련 옵션 처리
     if args.file:
-        
+    
         file_info = args.file.split(':')
-        
+    
         file_path = file_info[0]
-        
+    
         expected_hash = file_info[1] if len(file_info) > 1 else None
 
+        # 파일 무결성 검사
         check_file_integrity(file_path, expected_hash)
         
+        if args.replace:
+            
+            process_replace_option(file_path)
+
         if args.ransomware:
-        
+    
             check_for_ransomware(file_path)
-            
+        
         if args.apply_debug:
-            
+    
             apply_anti_debugging_and_obfuscation(file_path)
         
         if args.detect_debug:
-            
+    
             detect_anti_debugging_and_obfuscation(file_path)
-            
+        
         if args.remove_debug:
-            
+    
             remove_anti_debugging_and_obfuscation(file_path)
-            
+        
         if args.canary:
-            
+    
             insert_canary(file_path)
         
         if args.canary_check:
-            
-            check_canary_integrity(file_path)
-            
-        if args.canary_delete:
-            
-            remove_canary(file_path)
-            
-        if args.network_monitor:
-          
-            monitor_network()
-            
-        if args.copy_and_process:
-            
-            process_file_with_cp_option(file_path)
     
-    else:
+            check_canary_integrity(file_path)
+        
+        if args.canary_delete:
+    
+            remove_canary(file_path)
+        
+        if args.copy_and_process:
+    
+            process_file_with_cp_option(file_path)
 
-        parser.print_help()
-        
-    if args.database:
-        
-        connect_to_db(args.database)
-    else:
-        
-        print("\n 데이터베이스를 선택하려면 -db 옵션에 'mysql' 또는 'oracle'을 입력하세요. \n")
+        # DB 로그 저장 처리
+        if args.db_info and cursor:
+    
+            # 파일 무결성 관련 로그 저장
+            if expected_hash:
+    
+                actual_hash = calculate_file_hash(file_path)
+    
+                status = 'Integrity Passed' if actual_hash == expected_hash else 'Integrity Failed'
+    
+                insert_file_integrity_log(file_path, "File Integrity Check", status)
+            
+            # 랜섬웨어 관련 로그 저장
+            if args.ransomware:
+    
+                insert_file_integrity_log(file_path, "Ransomware Check", "Suspicious" if check_for_ransomware(file_path) else "Clean")
+            
+            # 안티디버깅 및 난독화 관련 로그 저장
+            if args.apply_debug:
+    
+                insert_file_integrity_log(file_path, "Apply Anti-Debugging", "Applied")
+    
+            if args.detect_debug:
+    
+                insert_file_integrity_log(file_path, "Detect Anti-Debugging", "Detected" if detect_anti_debugging_and_obfuscation(file_path) else "Not Detected")
+    
+            if args.remove_debug:
+    
+                insert_file_integrity_log(file_path, "Remove Anti-Debugging", "Removed")
+
+    # 네트워크 모니터링 옵션 처리
+    if args.network_monitor:
+    
+        monitor_network()
+
+    # DB 연결 종료
+    if db_conn:
+    
+        db_conn.close()
+    
+        print("데이터베이스 연결이 종료되었습니다.")
 
 if __name__ == "__main__":
-
+    
     main()
 
