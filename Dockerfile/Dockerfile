@@ -1,17 +1,20 @@
-# 베이스 이미지 선택 (Python 최신 버전 사용)
+# 베이스 이미지로 Python 3.9 사용
 FROM python:3.9-slim
 
-# 작업 디렉토리 설정
+# 작업 디렉토리 생성
 WORKDIR /app
 
-# 요구 사항 파일을 이미지에 복사
-COPY requirements.txt .
+# 필요한 파일들을 복사
+COPY requirements.txt ./
 
-# 패키지 설치
+# 필요한 패키지 설치
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 소스 코드를 이미지에 복사
+# 소스 파일 복사
 COPY . .
 
-# 스크립트를 실행할 기본 명령어 설정
+# 포트 노출 (선택적, 네트워크 모니터링용 포트가 있으면 설정)
+EXPOSE 8080
+
+# 실행 명령어 설정
 CMD ["python", "main.py"]

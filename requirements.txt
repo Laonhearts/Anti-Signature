@@ -1,3 +1,6 @@
 argparse
 hashlib
 scapy
+mysql-connector-python
+
+
