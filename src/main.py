@@ -10,6 +10,8 @@ import threading
 import signal
 from datetime import datetime
 import shutil
+from docx import Document
+from datetime import datetime
 
 # 파일 시그니처 정의
 FILE_SIGNATURES = {
@@ -194,6 +196,14 @@ def connect_to_db(db_type):
     cursor = db_conn.cursor()
     
     print(f"{db_type.upper()} 데이터베이스에 연결되었습니다.")
+    
+def reconnect_db():
+    
+    if not db_conn or not db_conn.is_connected():
+    
+        print("DB 연결이 끊어졌습니다. 재연결을 시도합니다.")
+    
+        connect_to_db('mysql')
     
 def insert_operation_log(operation, details, status):
     
@@ -779,6 +789,134 @@ def process_replace_option(file_path):  # replace 옵션 실행 함수    # 파�
     except FileNotFoundError:
         
         print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
+        
+def fetch_data_from_db():
+    
+    reconnect_db()  # DB 연결 상태 확인 및 재연결
+    
+    try:
+    
+        cursor.execute("SELECT * FROM operation_logs")
+        operation_logs = cursor.fetchall()
+
+        cursor.execute("SELECT * FROM file_integrity_logs")
+        integrity_logs = cursor.fetchall()
+
+        cursor.execute("SELECT * FROM file_signature_logs")
+        signature_logs = cursor.fetchall()
+
+        return {
+            "operation_logs": operation_logs,
+            "integrity_logs": integrity_logs,
+            "signature_logs": signature_logs
+        }
+    
+    except mysql.connector.Error as err:
+    
+        print(f"DB에서 데이터를 가져오는 중 오류 발생: {err}")
+    
+        return None
+
+
+def generate_docx_report(report_data, output_file): # .docx 형식으로 보고서를 생성하는 함수
+    
+    document = Document()
+
+    document.add_heading('Anti Signature Report', 0)
+    
+    document.add_paragraph(f"Report generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    document.add_paragraph('')
+
+    # Operation Logs
+    document.add_heading('Operation Logs', level=1)
+    
+    for log in report_data["operation_logs"]:
+        
+        document.add_paragraph(f"Operation: {log[1]}, Details: {log[2]}, Status: {log[3]}, Timestamp: {log[4]}")
+
+    # 저장
+    document.save(output_file)
+   
+    print(f".docx 보고서가 {output_file}에 저장되었습니다.")
+    
+def generate_hwp_report(report_data, output_file): # .hwp 형식으로 보고서를 생성하는 함수
+    
+    document = Document()
+
+    document.add_heading('Anti Signature Report', 0)
+    
+    document.add_paragraph(f"Report generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    document.add_paragraph('')
+
+    # Operation Logs
+    document.add_heading('Operation Logs', level=1)
+    
+    for log in report_data["operation_logs"]:
+        
+        document.add_paragraph(f"Operation: {log[1]}, Details: {log[2]}, Status: {log[3]}, Timestamp: {log[4]}")
+
+    # 저장
+    document.save(output_file)
+   
+    print(f".docx 보고서가 {output_file}에 저장되었습니다.")
+
+def generate_html_report(report_data, output_file):     # HTML 형식으로 보고서를 생성하는 함수
+    
+    html_content = f"""
+    
+    <html>
+    <head>
+        <title>Anti Signature Report</title>
+    </head>
+    <body>
+        <h1>Anti Signature Report</h1>
+        <p>Report generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <h2>Operation Logs</h2>
+        <ul>
+    
+    """
+    # Operation Logs
+    for log in report_data["operation_logs"]:
+   
+        html_content += f"<li>Operation: {log[1]}, Details: {log[2]}, Status: {log[3]}, Timestamp: {log[4]}</li>"
+   
+    html_content += "</ul>"
+
+    with open(output_file, 'w') as f:
+   
+        f.write(html_content)
+   
+    print(f"HTML 보고서가 {output_file}에 저장되었습니다.")
+    
+    
+def process_report_option(report_format):  #  보고서 생성 옵션 처리
+
+    # DB에서 데이터 가져오기
+    report_data = fetch_data_from_db()
+
+    # 보고서 형식에 따른 처리
+    if report_format == 'docx':
+
+        output_file = 'anti_signature_report.docx'
+
+        generate_docx_report(report_data, output_file)
+        
+    elif report_format == 'html':
+
+        output_file = 'anti_signature_report.html'
+
+        generate_html_report(report_data, output_file)
+        
+    elif report_format == 'hwp':
+        
+        output_file = 'anti_signature_report.hwp'
+        
+        generate_hwp_report(report_data, output_file)
+
+    else:
+
+        print("지원하지 않는 형식입니다. docx 또는 html을 선택하세요.")
+
 
 def main():
     
@@ -892,6 +1030,15 @@ def main():
     
     )
     
+    parser.add_argument(
+        
+        '-report', '--report',
+        type=str,
+        choices=['docx', 'html'],
+        help='DB 데이터를 기반으로 보고서를 생성합니다. 지원되는 형식: docx, html'
+    
+    )
+    
     args = parser.parse_args()
 
     # DB 연결 설정
@@ -988,6 +1135,10 @@ def main():
         db_conn.close()
     
         print("데이터베이스 연결이 종료되었습니다.")
+        
+    if args.report:
+        
+        process_report_option(args.report)
 
 if __name__ == "__main__":
     
