@@ -1,6 +1,5 @@
 argparse
-hashlib
 scapy
 mysql-connector-python
-
+python-docx
 
