@@ -5,6 +5,7 @@ import hashlib
 import os
 import re
 import mysql.connector  # MySQL 연결용
+import cx_Oracle  # Oracle 연결용
 from scapy.all import sniff, wrpcap, IP, TCP, UDP, ICMP
 import threading
 import signal
@@ -12,6 +13,8 @@ from datetime import datetime
 import shutil
 from docx import Document
 from datetime import datetime
+from docx.shared import RGBColor
+from docx.enum.text import WD_COLOR_INDEX
 
 # 파일 시그니처 정의
 FILE_SIGNATURES = {
@@ -177,7 +180,7 @@ def calculate_file_hash(file_path, hash_algorithm='sha256'):    # 파일 해시 
     return hash_func.hexdigest()
 
 def connect_to_db(db_type):
-    
+
     global db_conn, cursor
     
     if db_type == 'mysql':
@@ -188,14 +191,26 @@ def connect_to_db(db_type):
             host="localhost",
             user="root",
             password="",
-            database="signature",  # 연결할 데이터베이스 이름으로 변경
-            port = 3306
-                
+            database="signature",
+            port=3306
+    
         )
     
-    cursor = db_conn.cursor()
+        cursor = db_conn.cursor()
     
-    print(f"{db_type.upper()} 데이터베이스에 연결되었습니다.")
+        print(f"{db_type.upper()} 데이터베이스에 연결되었습니다.")
+
+    elif db_type == 'oracle':
+    
+        # Oracle 연결 설정
+    
+        dsn = cx_Oracle.makedsn("localhost", 1521, service_name="orcl")
+    
+        db_conn = cx_Oracle.connect(user="system", password="2558jun@", dsn=dsn)
+    
+        cursor = db_conn.cursor()
+    
+        print(f"{db_type.upper()} 데이터베이스에 연결되었습니다.")
     
 def reconnect_db():
     
@@ -791,101 +806,157 @@ def process_replace_option(file_path):  # replace 옵션 실행 함수    # 파�
         print(f"Error: {file_path} 파일을 찾을 수 없습니다.")
         
 def fetch_data_from_db():
-    
-    reconnect_db()  # DB 연결 상태 확인 및 재연결
+
+    reconnect_db()
     
     try:
     
-        cursor.execute("SELECT * FROM operation_logs")
-        operation_logs = cursor.fetchall()
+        if isinstance(db_conn, mysql.connector.connection.MySQLConnection):
+    
+            cursor.execute("SELECT * FROM operation_logs")
+            operation_logs = cursor.fetchall()
 
-        cursor.execute("SELECT * FROM file_integrity_logs")
-        integrity_logs = cursor.fetchall()
+            cursor.execute("SELECT * FROM file_integrity_logs")
+            integrity_logs = cursor.fetchall()
 
-        cursor.execute("SELECT * FROM file_signature_logs")
-        signature_logs = cursor.fetchall()
+            cursor.execute("SELECT * FROM file_signature_logs")
+            signature_logs = cursor.fetchall()
+
+        elif isinstance(db_conn, cx_Oracle.Connection):
+    
+            cursor.execute("SELECT * FROM operation_logs")
+            operation_logs = cursor.fetchall()
+
+            cursor.execute("SELECT * FROM file_integrity_logs")
+            integrity_logs = cursor.fetchall()
+
+            cursor.execute("SELECT * FROM file_signature_logs")
+            signature_logs = cursor.fetchall()
 
         return {
+    
             "operation_logs": operation_logs,
             "integrity_logs": integrity_logs,
             "signature_logs": signature_logs
+    
         }
-    
-    except mysql.connector.Error as err:
-    
+
+    except (mysql.connector.Error, cx_Oracle.DatabaseError) as err:
+
         print(f"DB에서 데이터를 가져오는 중 오류 발생: {err}")
-    
+
         return None
 
 
-def generate_docx_report(report_data, output_file): # .docx 형식으로 보고서를 생성하는 함수
+def generate_docx_report(report_data, output_file):  # .docx 형식으로 보고서를 생성하는 함수
     
     document = Document()
 
     document.add_heading('Anti Signature Report', 0)
     
     document.add_paragraph(f"Report generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
     document.add_paragraph('')
 
     # Operation Logs
     document.add_heading('Operation Logs', level=1)
-    
+
+    previous_date = None
+
     for log in report_data["operation_logs"]:
+
+        log_date = log[4].date()  # 로그의 날짜 부분만 추출
         
-        document.add_paragraph(f"Operation: {log[1]}, Details: {log[2]}, Status: {log[3]}, Timestamp: {log[4]}")
+        # 날짜가 변경되면 구분줄 추가
+        if previous_date != log_date:
+
+            document.add_paragraph(f"Logs for {log_date}:", style='Intense Quote')
+
+            previous_date = log_date
+
+        paragraph = document.add_paragraph()
+
+        run = paragraph.add_run(f"Operation: {log[1]}, Details: {log[2]}, Status: {log[3]}, Timestamp: {log[4]}")
+
+        # 의심되는 로그를 강조 (노란색 배경)
+        if log[3].lower() in ["suspicious", "malicious", "signature mismatch", "hash mismatch"]:
+
+            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
     # 저장
     document.save(output_file)
-   
-    print(f".docx 보고서가 {output_file}에 저장되었습니다.")
-    
-def generate_hwp_report(report_data, output_file): # .hwp 형식으로 보고서를 생성하는 함수
-    
-    document = Document()
 
-    document.add_heading('Anti Signature Report', 0)
-    
-    document.add_paragraph(f"Report generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    document.add_paragraph('')
-
-    # Operation Logs
-    document.add_heading('Operation Logs', level=1)
-    
-    for log in report_data["operation_logs"]:
-        
-        document.add_paragraph(f"Operation: {log[1]}, Details: {log[2]}, Status: {log[3]}, Timestamp: {log[4]}")
-
-    # 저장
-    document.save(output_file)
-   
     print(f".docx 보고서가 {output_file}에 저장되었습니다.")
 
-def generate_html_report(report_data, output_file):     # HTML 형식으로 보고서를 생성하는 함수
-    
+
+def generate_html_report(report_data, output_file):  # HTML 형식으로 보고서를 생성하는 함수
+
     html_content = f"""
-    
     <html>
+
     <head>
+
         <title>Anti Signature Report</title>
+
+        <style>
+
+            body {{ font-family: Arial, sans-serif; }}
+
+            .suspicious {{ background-color: yellow; }}
+
+            .malicious {{ background-color: red; color: white; }}
+
+            .log-date {{ border-top: 2px solid black; margin-top: 10px; padding-top: 10px; }}
+
+        </style>
+
     </head>
+
     <body>
+
         <h1>Anti Signature Report</h1>
+
         <p>Report generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+
         <h2>Operation Logs</h2>
-        <ul>
-    
+
     """
-    # Operation Logs
+
+    previous_date = None
+
     for log in report_data["operation_logs"]:
-   
-        html_content += f"<li>Operation: {log[1]}, Details: {log[2]}, Status: {log[3]}, Timestamp: {log[4]}</li>"
-   
-    html_content += "</ul>"
+
+        log_date = log[4].date()  # 로그의 날짜 부분만 추출
+
+        # 날짜가 변경되면 구분줄 추가
+        if previous_date != log_date:
+
+            html_content += f"<div class='log-date'><strong>Logs for {log_date}:</strong></div>"
+
+            previous_date = log_date
+
+        log_class = ""
+
+        if log[3].lower() in ["suspicious", "malicious", "signature mismatch", "hash mismatch"]:
+
+            log_class = "suspicious" if log[3].lower() == "suspicious" else "malicious"
+
+        html_content += f"""
+
+            <div class="{log_class}">
+
+                Operation: {log[1]}, Details: {log[2]}, Status: {log[3]}, Timestamp: {log[4]}
+
+            </div>
+
+        """
+
+    html_content += "</body></html>"
 
     with open(output_file, 'w') as f:
-   
+
         f.write(html_content)
-   
+
     print(f"HTML 보고서가 {output_file}에 저장되었습니다.")
     
     
@@ -906,12 +977,6 @@ def process_report_option(report_format):  #  보고서 생성 옵션 처리
         output_file = 'anti_signature_report.html'
 
         generate_html_report(report_data, output_file)
-        
-    elif report_format == 'hwp':
-        
-        output_file = 'anti_signature_report.hwp'
-        
-        generate_hwp_report(report_data, output_file)
 
     else:
 
@@ -1017,9 +1082,9 @@ def main():
     parser.add_argument(
         
         '-db', '--database', 
-        choices=['mysql'], 
-        help='DB 선택 (MySQL)'
-    
+        choices=['mysql', 'oracle'], 
+        help='DB 선택 (MySQL 또는 Oracle)'
+        
     )
     
     parser.add_argument(
@@ -1143,3 +1208,4 @@ def main():
 if __name__ == "__main__":
     
     main()
+

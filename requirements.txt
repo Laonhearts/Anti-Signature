@@ -2,4 +2,4 @@ argparse
 scapy
 mysql-connector-python
 python-docx
-
+cx_Oracle
